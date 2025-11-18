@@ -1,13 +1,11 @@
 import pandas as pd
 import numpy as np
-import re
 import os
-import asyncio
 import logging
+import asyncio
 from io import BytesIO
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-import tempfile
 
 # Настройка логирования
 logging.basicConfig(
@@ -39,93 +37,6 @@ class StudentProcessorBot:
                 return 1
         except (ValueError, TypeError):
             return 'н'
-
-    def extract_name_parts_from_full_name(self, full_name):
-        """Извлекает фамилию, имя и отчество из полного ФИО"""
-        if pd.isna(full_name):
-            return '', '', ''
-
-        parts = str(full_name).strip().split()
-        if len(parts) >= 3:
-            return parts[0], parts[1], ' '.join(parts[2:])
-        elif len(parts) == 2:
-            return parts[0], parts[1], ''
-        else:
-            return parts[0], '', ''
-
-    def extract_name_parts_from_separate(self, surname, name_with_patronymic):
-        """Извлекает ФИО из отдельных столбцов"""
-        if pd.isna(surname) or pd.isna(name_with_patronymic):
-            return '', '', ''
-
-        surname = str(surname).strip()
-        name_patronymic = str(name_with_patronymic).strip()
-        name_parts = name_patronymic.split()
-
-        if len(name_parts) >= 2:
-            return surname, name_parts[0], ' '.join(name_parts[1:])
-        elif len(name_parts) == 1:
-            return surname, name_parts[0], ''
-        else:
-            return surname, '', ''
-
-    def normalize_name(self, name):
-        """Нормализует имя для сравнения"""
-        return ' '.join(str(name).lower().split())
-
-    def find_student_in_results(self, student_name, df_results):
-        """Ищет студента в таблице результатов"""
-        student_surname, student_first_name, student_patronymic = self.extract_name_parts_from_full_name(student_name)
-
-        student_surname_norm = self.normalize_name(student_surname)
-        student_first_name_norm = self.normalize_name(student_first_name)
-        student_patronymic_norm = self.normalize_name(student_patronymic)
-
-        for idx, result_row in df_results.iterrows():
-            result_surname = ''
-            result_name_patronymic = ''
-
-            for col in df_results.columns:
-                col_lower = str(col).lower()
-                if 'фамилия' in col_lower and pd.notna(result_row[col]):
-                    result_surname = str(result_row[col]).strip()
-                elif 'имя' in col_lower and pd.notna(result_row[col]):
-                    result_name_patronymic = str(result_row[col]).strip()
-
-            if not result_surname and len(df_results.columns) >= 1:
-                result_surname = str(result_row[df_results.columns[0]]).strip() if pd.notna(
-                    result_row[df_results.columns[0]]) else ''
-            if not result_name_patronymic and len(df_results.columns) >= 2:
-                result_name_patronymic = str(result_row[df_results.columns[1]]).strip() if pd.notna(
-                    result_row[df_results.columns[1]]) else ''
-
-            result_surname_norm, result_first_name_norm, result_patronymic_norm = self.extract_name_parts_from_separate(
-                result_surname, result_name_patronymic
-            )
-
-            result_surname_norm = self.normalize_name(result_surname_norm)
-            result_first_name_norm = self.normalize_name(result_first_name_norm)
-            result_patronymic_norm = self.normalize_name(result_patronymic_norm)
-
-            surname_match = (student_surname_norm == result_surname_norm)
-            name_match = (student_first_name_norm in result_first_name_norm or
-                          result_first_name_norm in student_first_name_norm or
-                          student_first_name_norm == result_first_name_norm)
-
-            patronymic_match = True
-            if student_patronymic_norm and result_patronymic_norm:
-                patronymic_match = (student_patronymic_norm in result_patronymic_norm or
-                                    result_patronymic_norm in student_patronymic_norm)
-
-            name_start_match = False
-            if student_first_name_norm and result_first_name_norm:
-                name_start_match = (student_first_name_norm.startswith(result_first_name_norm[:2]) or
-                                    result_first_name_norm.startswith(student_first_name_norm[:2]))
-
-            if surname_match and (name_match or name_start_match) and patronymic_match:
-                return idx, result_row
-
-        return None, None
 
     def read_students_list(self, file_content):
         """Читает список студентов из файла"""
@@ -184,6 +95,26 @@ class StudentProcessorBot:
             return 'lecture', test_name
         else:
             return 'lab', test_name
+
+    def find_student_in_results(self, student_name, df_results):
+        """Упрощенный поиск студента по ФИО"""
+        # Нормализуем имя студента для поиска
+        student_name_norm = ' '.join(str(student_name).lower().split())
+        
+        for idx, result_row in df_results.iterrows():
+            # Ищем столбцы с ФИО
+            for col in df_results.columns:
+                col_lower = str(col).lower()
+                if any(keyword in col_lower for keyword in ['фио', 'фамилия', 'имя', 'студент']):
+                    if pd.notna(result_row[col]):
+                        result_name = str(result_row[col]).strip().lower()
+                        # Простое сравнение по вхождению
+                        if (student_name_norm in result_name or 
+                            result_name in student_name_norm or
+                            any(part in result_name for part in student_name_norm.split())):
+                            return idx, result_row
+        
+        return None, None
 
     async def process_data(self, user_id, selected_groups, export_lectures, export_labs, export_finals):
         """Обрабатывает данные и возвращает файлы"""
@@ -581,7 +512,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "toggle_lectures":
         session = bot_processor.user_sessions.get(user_id)
         session['export_lectures'] = not session.get('export_lectures', True)
-        await button_handler(update, context)  # Возвращаемся к тому же меню
+        await button_handler(update, context)
     
     elif data == "toggle_labs":
         session = bot_processor.user_sessions.get(user_id)
