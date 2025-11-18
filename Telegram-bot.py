@@ -340,7 +340,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'step': None,
             'df_results': None,
             'student_dict': None,
-            'available_groups': []
+            'available_groups': [],
+            'selected_groups': [],
+            'export_lectures': True,
+            'export_labs': True,
+            'export_finals': True
         }
     
     keyboard = [
